@@ -16,6 +16,8 @@ uint8_t broadcastAddress[] = {0x80, 0xf3, 0xda, 0x5d, 0x95, 0xb8}; //80:f3:da:5d
 // Structure example to send data
 // Must match the receiver structure
 typedef struct struct_message {
+  // board id
+  int id;
   int analogReading1;
   int analogReading2;
 } struct_message;
@@ -61,6 +63,11 @@ void setup() {
 }
  
 void loop() {
+  // Change this id for each sender
+  // Sender 1 --> fsrData.id = 1;
+  // Sender 2 --> fsrData.id = 2;
+  fsrData.id = 1;
+
   // Set values to send
   fsrData.analogReading1 = analogRead(FORCE_SENSOR_PIN_1);
   fsrData.analogReading2 = analogRead(FORCE_SENSOR_PIN_2);
