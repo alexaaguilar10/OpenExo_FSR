@@ -8,58 +8,82 @@
 #include <esp_now.h>
 #include <WiFi.h>
 
-// Structure example to receive data
-// Must match the sender structure
-typedef struct struct_message {
-  int id;
-  int analogReading1;
-  int analogReading2;
-} struct_message;
+/* 
+ * StructMessage
+ * -------------
+ * Structure holds the sensor readings that each ESP32 board sends.
+ *   - id: identifier for the board (1 for Board #1, 2 for Board #2)
+ *   - analog_reading_1: the first sensor value read from the board
+ *   - analog_reading_2: the second sensor value read from the board
+ *
+ * The sender and receiver must have the same structure definitions,
+ * otherwise the data could be interpreted incorrectly.
+ */
+struct StructMessage 
+{
+    int id;
+    int analog_reading_1;
+    int analog_reading_2;
+};
 
-// Create a struct_message called fsrData
-struct_message fsrData;
+
+// Create a struct_message called fsr_data
+struct_message fsr_data;
 
 // create separate structures to hold data from each ESP32
-struct_message board1Data; // data from ESP32 sender #1
-struct_message board2Data; // data from ESP32 sender #2
+struct_message board1_data; // data from ESP32 sender #1
+struct_message board2_data; // data from ESP32 sender #2
 
 // callback function that will be executed when data is received
-void OnDataRecv(const uint8_t * mac, const uint8_t *incomingData, int len) {
-  memcpy(&fsrData, incomingData, sizeof(fsrData));
+void OnDataRecv(const uint8_t * mac, const uint8_t *incomingData, int len) 
+{
+  memcpy(&fsr_data, incomingData, sizeof(fsr_data));
   Serial.println("-----------------------------");
   Serial.print("Data received from board ID: ");
-  Serial.println(fsrData.id);
+  Serial.println(fsr_data.id);
 
-  // update the correct board’s stored data based on its id
-  if (fsrData.id == 1) 
+  // check which board sent the data based on the board ID
+  if (fsr_data.id == 1) 
   {
-    board1Data = fsrData;
+    board1_data = fsr_data;
+    // print both sensor readings from board #1
     Serial.println("FSR reading 1: ");
-    Serial.println(fsrData.analogReading1);
+    Serial.println(fsr_data.analogReading1);
     Serial.println();
     Serial.println("FSR Reading 2: ");
-    Serial.println(fsrData.analogReading2);
+    Serial.println(fsr_data.analogReading2);
     Serial.println();
     
   }
-  else if (fsrData.id == 2) 
+  else if (fsr_data.id == 2) 
   {
-    board2Data = fsrData; 
+    board2_data = fsr_data; 
+    // print both sensor readings from board #2
     Serial.println("FSR reading 1: ");
-    Serial.println(fsrData.analogReading1);
+    Serial.println(fsr_data.analogReading1);
     Serial.println();
     Serial.println("FSR Reading 2: ");
-    Serial.println(fsrData.analogReading2);
+    Serial.println(fsr_data.analogReading2);
     Serial.println();
   }
   else 
   {
-    // its not reading anything
+    // if the ID doesn’t match known boards, report an error
     Serial.println("Error");
   }
 }
- 
-void setup() {
+
+/* 
+ * This function prepares the device for receiving data via ESP-NOW.
+ *
+ * Steps:
+ *   1. Start the Serial Monitor for debugging and output.
+ *   2. Set the ESP32 to Wi-Fi Station mode (needed for ESP-NOW communication).
+ *   3. Initialize ESP-NOW and check for errors.
+ *   4. Register the data-receiving callback function.
+ */
+void setup() 
+{
   // Initialize Serial Monitor
   Serial.begin(115200);
   
@@ -67,7 +91,8 @@ void setup() {
   WiFi.mode(WIFI_STA);
 
   // Init ESP-NOW
-  if (esp_now_init() != ESP_OK) {
+  if (esp_now_init() != ESP_OK) 
+  {
     Serial.println("Error initializing ESP-NOW");
     return;
   }
@@ -76,7 +101,9 @@ void setup() {
   // get recv packer info
   esp_now_register_recv_cb(esp_now_recv_cb_t(OnDataRecv));
 }
- 
-void loop() {
+
+// This function runs continuously after setup() finishes.
+void loop() 
+{
 
 }
