@@ -34,10 +34,22 @@ struct_message fsr_data;
 struct_message board1_data; // data from ESP32 sender #1
 struct_message board2_data; // data from ESP32 sender #2
 
+unsigned long lastReceiveTime = 0;
+
 // callback function that will be executed when data is received
 void OnDataRecv(const uint8_t * mac, const uint8_t *incomingData, int len) 
 {
   memcpy(&fsr_data, incomingData, sizeof(fsr_data));
+  unsigned long currentTime = millis();
+  if (lastReceiveTime != 0) 
+  {
+    unsigned long interval = currentTime - lastReceiveTime;
+    float frequency = 1000.0 / interval;
+    Serial.print("Received at: ");
+    Serial.print(frequency);
+    Serial.println(" Hz");
+  }
+  lastReceiveTime = currentTime;
   Serial.println("-----------------------------");
   Serial.print("Data received from board ID: ");
   Serial.println(fsr_data.id);

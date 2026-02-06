@@ -22,8 +22,8 @@ typedef struct DataStruct
 struct struct_message 
 {
     int id;               // ID number of the sending board (1 or 2)
-    int analog_reading_1; // First analog reading
-    int analog_reading_2; // Second analog reading
+    float analog_reading_1; // First analog reading
+    float analog_reading_2; // Second analog reading
 };
 
 // packet that Teensy will receive over I2C

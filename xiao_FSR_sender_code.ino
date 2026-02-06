@@ -33,8 +33,8 @@ uint8_t broadcastAddress[] = {0x80, 0xf3, 0xda, 0x5d, 0x95, 0xb8}; //80:f3:da:5d
 struct StructMessage 
 {
     int id;
-    int analog_reading_1;
-    int analog_reading_2;
+    float analog_reading_1;
+    float analog_reading_2;
 };
 
 // Create a struct_message called fsr_data
