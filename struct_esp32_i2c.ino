@@ -27,29 +27,31 @@ uint8_t registers[REG_MAP_SIZE];
 // variable to store what register the Teensy is requesting from
 volatile uint8_t currentRegister = 0;
 
+// variable to check if data has been received over ESPNOW
+volatile bool board1Ready = false;
+volatile bool board2Ready = false;
+
 // Temporary storage for the latest received ESP-NOW packet
 struct_message recvd_fsr_data;   
 
 // These two hold readings from each individual ESP32 sender
-struct_message board1_data;      
-struct_message board2_data;      
+struct_message board1_data = {0, 0.0, 0.0};      
+struct_message board2_data = {0, 0.0, 0.0};      
 
 void requestEvent() {
 
-  // load board #1 readings into the struct
-  fsrData.pair1.reading1 = board1_data.analog_reading_1;
-  fsrData.pair1.reading2 = board1_data.analog_reading_2;
-
-  // load board #2 readings into the struct
-  fsrData.pair2.reading1 = board2_data.analog_reading_1;
-  fsrData.pair2.reading2 = board2_data.analog_reading_2;
+  if (!board1Ready || !board2Ready) 
+  {
+    float dummy = 0.0;
+    Wire.write((uint8_t*)&dummy, sizeof(float));  // send 0 until data exists
+    return;
+  }
 
   // load board readings into register array to be sent over I2C
   writeFloatToRegister(REG_LEFT_HEEL, board1_data.analog_reading_1);
   writeFloatToRegister(REG_LEFT_TOE, board1_data.analog_reading_2);
   writeFloatToRegister(REG_RIGHT_HEEL, board2_data.analog_reading_1);
   writeFloatToRegister(REG_RIGHT_TOE, board2_data.analog_reading_2);
-
 
   // Bounds check
   if (currentRegister >= REG_MAP_SIZE)
@@ -59,7 +61,7 @@ void requestEvent() {
   }
 
   // send the register array
-  Wire.write(&registers[currentRegister], REG_MAP_SIZE - currentRegister);
+  Wire.write(&registers[currentRegister], FLOAT_SIZE);
 }
 
 // function to receive what register the teensy wants data from
@@ -91,15 +93,26 @@ void onDataRecv(const uint8_t * mac, const uint8_t * incomingData, int len) {
   // Copy the received bytes into our struct
   memcpy(&recvd_fsr_data, incomingData, sizeof(recvd_fsr_data));
 
+  // Print out what we received for debugging
+  Serial.print("Received ESPNOW packet from ID ");
+  Serial.print(recvd_fsr_data.id);
+  Serial.print(": reading1 = ");
+  Serial.print(recvd_fsr_data.analog_reading_1, 6);
+  Serial.print(", reading2 = ");
+  Serial.println(recvd_fsr_data.analog_reading_2, 6);
+
+
   // Check which sender the packet came from based on ID
   if (recvd_fsr_data.id == 1) {
     // Save to board 1 struct
-    board1_data = recvd_fsr_data; 
+    board1_data = recvd_fsr_data;
+    board1Ready = true; 
   }
 
   else if (recvd_fsr_data.id == 2) {
     // Save to board 2 struct
     board2_data = recvd_fsr_data; 
+    board2Ready = true;
   }
 
   else {
