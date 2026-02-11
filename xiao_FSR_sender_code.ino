@@ -30,7 +30,7 @@ uint8_t broadcastAddress[] = {0x80, 0xf3, 0xda, 0x5d, 0x95, 0xb8}; //80:f3:da:5d
  * The sender and receiver must have the same structure definitions,
  * otherwise the data could be interpreted incorrectly.
  */
-struct StructMessage 
+struct struct_message 
 {
     int id;
     float analog_reading_1;
@@ -103,8 +103,8 @@ void loop()
   fsr_data.id = 1;
 
   // Set values to send
-  fsr_data.analogReading1 = analogRead(FORCE_SENSOR_PIN_1);
-  fsr_data.analogReading2 = analogRead(FORCE_SENSOR_PIN_2);
+  fsr_data.analog_reading_1 = analogRead(FORCE_SENSOR_PIN_1);
+  fsr_data.analog_reading_2 = analogRead(FORCE_SENSOR_PIN_2);
   
   // Send message via ESP-NOW
   esp_err_t result = esp_now_send(broadcastAddress, (uint8_t *) &fsr_data, sizeof(fsr_data));
