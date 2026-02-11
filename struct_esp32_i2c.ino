@@ -4,20 +4,15 @@
 
 #define SLAVE_ADDR 0x08  // I2C address this ESP32 will use as a slave
 
-typedef struct DataStruct
-{
-    // First pair of readings (from board 1)
-    struct pair1 {
-      float reading1;
-      float reading2;
-    } pair1;
+// Register map
+#define REG_LEFT_HEEL 0x00  // 4 bytes (float)
+#define REG_LEFT_TOE 0x04  // 4 bytes
+#define REG_RIGHT_HEEL 0x08  // 4 bytes
+#define REG_RIGHT_TOE 0x0C  // 4 bytes
 
-    // Second pair of readings (from board 2)
-    struct pair2 {
-      float reading1;
-      float reading2;
-    } pair2;
-};
+#define REG_MAP_SIZE 16    // total register space (4 floats × 4 bytes)
+
+#define FLOAT_SIZE 4 // size of float, to be used in Wire.write()
 
 struct struct_message 
 {
@@ -26,8 +21,11 @@ struct struct_message
     float analog_reading_2; // Second analog reading
 };
 
-// packet that Teensy will receive over I2C
-DataStruct fsrData;              
+// register array to store all registers
+uint8_t registers[REG_MAP_SIZE];
+
+// variable to store what register the Teensy is requesting from
+volatile uint8_t currentRegister = 0;
 
 // Temporary storage for the latest received ESP-NOW packet
 struct_message recvd_fsr_data;   
@@ -46,8 +44,45 @@ void requestEvent() {
   fsrData.pair2.reading1 = board2_data.analog_reading_1;
   fsrData.pair2.reading2 = board2_data.analog_reading_2;
 
-  // send the entire struct as raw bytes over I2C back to the Teensy
-  Wire.write((byte*) &fsrData, sizeof(fsrData));
+  // load board readings into register array to be sent over I2C
+  writeFloatToRegister(REG_LEFT_HEEL, board1_data.analog_reading_1);
+  writeFloatToRegister(REG_LEFT_TOE, board1_data.analog_reading_2);
+  writeFloatToRegister(REG_RIGHT_HEEL, board2_data.analog_reading_1);
+  writeFloatToRegister(REG_RIGHT_TOE, board2_data.analog_reading_2);
+
+
+  // Bounds check
+  if (currentRegister >= REG_MAP_SIZE)
+  {
+    Wire.write((uint8_t)0x00); // Return dummy byte if invalid
+    return;
+  }
+
+  // send the register array
+  Wire.write(&registers[currentRegister], REG_MAP_SIZE - currentRegister);
+}
+
+// function to receive what register the teensy wants data from
+void receiveEvent(int numBytes)
+{
+  if (numBytes >= 1)
+  {
+    currentRegister = Wire.read();
+  }
+
+  while (Wire.available())
+  {
+    Wire.read(); // clear buffer
+  }
+}
+
+// helper function to write float values into registers
+void writeFloatToRegister(uint8_t reg, float value)
+{
+  if (reg + sizeof(float) > REG_MAP_SIZE)
+    return;  // Prevent overflow
+
+  memcpy(&registers[reg], &value, sizeof(float));
 }
 
 
@@ -94,6 +129,9 @@ void setup() {
   // register function that sends data to the Teensy whenever it requests
   Wire.onRequest(requestEvent);
 
+  // declare function that receives data from Teensy
+  Wire.onReceive(receiveEvent);
+  
   Serial.println("ESP32 Slave Ready");
 }
 
