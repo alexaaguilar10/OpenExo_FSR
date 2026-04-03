@@ -26,6 +26,7 @@ uint8_t registers[REG_MAP_SIZE];
 
 // variable to store what register the Teensy is requesting from
 volatile uint8_t currentRegister = 0;
+volatile uint8_t lastRegister;
 
 // variable to check if data has been received over ESPNOW
 volatile bool board1Ready = false;
@@ -38,6 +39,10 @@ struct_message recvd_fsr_data;
 struct_message board1_data = {0, 0.0, 0.0};      
 struct_message board2_data = {0, 0.0, 0.0};      
 
+// Flags for safe debug printing (set in ISR, printed in loop())
+volatile bool i2cDebugPending = false;
+volatile uint8_t i2cLastReg = 0;
+
 void requestEvent() {
 
   if (!board1Ready || !board2Ready) 
@@ -47,12 +52,6 @@ void requestEvent() {
     return;
   }
 
-  // load board readings into register array to be sent over I2C
-  writeFloatToRegister(REG_LEFT_HEEL, board1_data.analog_reading_1);
-  writeFloatToRegister(REG_LEFT_TOE, board1_data.analog_reading_2);
-  writeFloatToRegister(REG_RIGHT_HEEL, board2_data.analog_reading_1);
-  writeFloatToRegister(REG_RIGHT_TOE, board2_data.analog_reading_2);
-
   // Bounds check
   if (currentRegister >= REG_MAP_SIZE)
   {
@@ -60,8 +59,21 @@ void requestEvent() {
     return;
   }
 
+  // check if sending twice
+  // if (currentRegister == lastRegister)
+  // {
+  //   return; // skip sending if it's already been sent
+  // }
+
+  // snapshot current register to avoid it being changed by receiveEvent
+  uint8_t reg = currentRegister;
+
   // send the register array
-  Wire.write(&registers[currentRegister], FLOAT_SIZE);
+  Wire.write(&registers[reg], REG_MAP_SIZE);
+
+  // mark for safe debug printing in main loop
+  i2cLastReg = reg;
+  i2cDebugPending = true;
 }
 
 // function to receive what register the teensy wants data from
@@ -76,6 +88,10 @@ void receiveEvent(int numBytes)
   {
     Wire.read(); // clear buffer
   }
+
+  // mark for safe debug printing in main loop
+  i2cLastReg = currentRegister;
+  i2cDebugPending = true;
 }
 
 // helper function to write float values into registers
@@ -94,12 +110,12 @@ void onDataRecv(const uint8_t * mac, const uint8_t * incomingData, int len) {
   memcpy(&recvd_fsr_data, incomingData, sizeof(recvd_fsr_data));
 
   // Print out what we received for debugging
-  Serial.print("Received ESPNOW packet from ID ");
-  Serial.print(recvd_fsr_data.id);
-  Serial.print(": reading1 = ");
-  Serial.print(recvd_fsr_data.analog_reading_1, 6);
-  Serial.print(", reading2 = ");
-  Serial.println(recvd_fsr_data.analog_reading_2, 6);
+  // Serial.print("Received ESPNOW packet from ID ");
+  // Serial.print(recvd_fsr_data.id);
+  // Serial.print(": reading1 = ");
+  // Serial.print(recvd_fsr_data.analog_reading_1, 6);
+  // Serial.print(", reading2 = ");
+  // Serial.println(recvd_fsr_data.analog_reading_2, 6);
 
 
   // Check which sender the packet came from based on ID
@@ -107,18 +123,59 @@ void onDataRecv(const uint8_t * mac, const uint8_t * incomingData, int len) {
     // Save to board 1 struct
     board1_data = recvd_fsr_data;
     board1Ready = true; 
+    // Load board readings into corresponding registers    
+    writeFloatToRegister(REG_LEFT_HEEL, board1_data.analog_reading_1);
+    writeFloatToRegister(REG_LEFT_TOE, board1_data.analog_reading_2);
+
+    // Print what registers we're loading values into for debugging
+    // Serial.print(" Packed reading: ");
+    // Serial.print(board1_data.analog_reading_1, 6);
+    // Serial.print(" into register: ");
+    // Serial.println(REG_LEFT_HEEL);
+
+    // Serial.print(" Packed reading: ");
+    // Serial.print(board1_data.analog_reading_2, 6);
+    // Serial.print(" into register: ");
+    // Serial.println(REG_LEFT_TOE);
   }
 
   else if (recvd_fsr_data.id == 2) {
     // Save to board 2 struct
     board2_data = recvd_fsr_data; 
     board2Ready = true;
+    // Load board readings into corresponding registers
+    writeFloatToRegister(REG_RIGHT_HEEL, board2_data.analog_reading_1);
+    writeFloatToRegister(REG_RIGHT_TOE, board2_data.analog_reading_2);
+
+    // Print what registers we're loading values into for debugging
+    // Serial.print(" Packed reading: ");
+    // Serial.print(board2_data.analog_reading_1, 6);
+    // Serial.print(" into register: ");
+    // Serial.println(REG_RIGHT_HEEL);
+
+    // Serial.print(" Packed reading: ");
+    // Serial.print(board2_data.analog_reading_2, 6);
+    // Serial.print(" into register: ");
+    // Serial.println(REG_RIGHT_TOE);
   }
 
   else {
     // if ID doesn’t match 1 or 2, something is wrong
     Serial.println("Error reading FSR data: Unknown board ID.");
   }
+
+  // snippet to read the register value status for debugging
+  // float regCheck[4];
+  // memcpy(regCheck, registers, REG_MAP_SIZE);
+
+  // Serial.print("Registers status: ");
+  // for(int i = 0; i < 4; i++)
+  // {
+  //   Serial.print(regCheck[i]);
+  //   Serial.print(" ");
+  // }
+  // Serial.println("");
+
 }
 
 void setup() {
@@ -149,5 +206,11 @@ void setup() {
 }
 
 void loop() {
+  // Safe place to print I2C debug info (not in ISR)
+  if (i2cDebugPending) {
+    i2cDebugPending = false;
+    Serial.print("I2C register requested/sent: ");
+    Serial.println(i2cLastReg);
+  }
 
 }

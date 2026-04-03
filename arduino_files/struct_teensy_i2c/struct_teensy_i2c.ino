@@ -49,17 +49,49 @@ void read_i2c(uint8_t* ret, uint8_t addr, uint8_t reg, uint8_t len)
   if (Wire.endTransmission() != 0)
   {
     Serial.println("Failed to send register.");
+    return;
   }
+
+  // delay slightly to ensure esp32 has received the correct register
+  delay(10);
 
   uint8_t bytesRead = Wire.requestFrom(addr, len);
   if (bytesRead != len)
   {
     Serial.println("Not enough bytes received.");
+    return;
   }
 
   for (uint8_t i=0; i<len; i++)
   {
       ret[i] = Wire.read();
+  }
+}
+
+// Read the entire register map in a single transaction (safer, avoids repeated small transactions)
+void read_register_block(uint8_t* ret, uint8_t addr, uint8_t startReg, uint8_t len)
+{
+  Wire.beginTransmission(addr);
+  Wire.write(startReg);
+  if (Wire.endTransmission() != 0)
+  {
+    Serial.println("Failed to set start register for block read.");
+    return;
+  }
+
+  // short delay to let slave prepare
+  delay(2);
+
+  uint8_t bytesRead = Wire.requestFrom(addr, len);
+  if (bytesRead != len)
+  {
+    Serial.print("Block read: expected "); Serial.print(len);
+    Serial.print(" bytes but got "); Serial.println(bytesRead);
+    return;
+  }
+
+  for (uint8_t i = 0; i < len; ++i) {
+    ret[i] = Wire.read();
   }
 }
 
@@ -72,15 +104,19 @@ void setup() {
 }
 
 void loop() {
+  // Read the full register map in one transaction to avoid register-pointer races
+  uint8_t regbuf[REG_MAP_SIZE];
+  read_register_block(regbuf, SLAVE_ADDR, 0x00, REG_MAP_SIZE);
 
-  read_i2c((uint8_t*)&leftHeel, SLAVE_ADDR, REG_LEFT_HEEL, FLOAT_SIZE);
-  read_i2c((uint8_t*)&leftToe, SLAVE_ADDR, REG_LEFT_TOE, FLOAT_SIZE);
-  read_i2c((uint8_t*)&rightHeel, SLAVE_ADDR, REG_RIGHT_HEEL, FLOAT_SIZE);
-  read_i2c((uint8_t*)&rightToe, SLAVE_ADDR, REG_RIGHT_TOE, FLOAT_SIZE);
+  // Copy bytes into floats (preserves exact byte order from the slave)
+  memcpy(&leftHeel, &regbuf[REG_LEFT_HEEL], FLOAT_SIZE);
+  memcpy(&leftToe, &regbuf[REG_LEFT_TOE], FLOAT_SIZE);
+  memcpy(&rightHeel, &regbuf[REG_RIGHT_HEEL], FLOAT_SIZE);
+  memcpy(&rightToe, &regbuf[REG_RIGHT_TOE], FLOAT_SIZE);
 
   // debug option to print raw data
-//  Serial.printf("LH: %f  LT: %f  RH: %f  RT: %f\n",
-//               leftHeel, leftToe, rightHeel, rightToe);
+  Serial.printf("LH: %f  LT: %f  RH: %f  RT: %f\n",
+              leftHeel, leftToe, rightHeel, rightToe);
 
   // increase time counter 
   timeCounter++;
@@ -113,14 +149,14 @@ void loop() {
 
     // print the average values for Pair 1
     Serial.printf("FSR Left Pair: \n");
-    Serial.printf("Toe Avg: %f \n", dataAvgLH);
-    Serial.printf("Heel Avg: %f \n", dataAvgLT);
+    Serial.printf("Toe Avg: %f \n", dataAvgLT);
+    Serial.printf("Heel Avg: %f \n", dataAvgLH);
     Serial.println();
 
     // print the average values for Pair 2
     Serial.printf("FSR Right Pair: \n");
-    Serial.printf("Toe Avg: %f \n", dataAvgRH);
-    Serial.printf("Heel Avg: %f \n", dataAvgRT);
+    Serial.printf("Toe Avg: %f \n", dataAvgRT);
+    Serial.printf("Heel Avg: %f \n", dataAvgRH);
     Serial.println();
   }
 
