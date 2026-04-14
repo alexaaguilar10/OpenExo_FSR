@@ -23,7 +23,7 @@ float rightToe = 0;
 float msDelay = 5; 
 float timeCounter = 0;
 
-// How many packets are expected in 2 seconds
+// How many packets are expected in X seconds
 float avgInterval = 2000 / msDelay;
 
 // Variables used to add up readings 
@@ -69,7 +69,7 @@ void read_i2c(uint8_t* ret, uint8_t addr, uint8_t reg, uint8_t len)
 }
 
 // Read the entire register map in a single transaction (safer, avoids repeated small transactions)
-void read_register_block(uint8_t* ret, uint8_t addr, uint8_t startReg, uint8_t len)
+void read_i2c_block(uint8_t* ret, uint8_t addr, uint8_t startReg, uint8_t len)
 {
   Wire.beginTransmission(addr);
   Wire.write(startReg);
@@ -95,28 +95,42 @@ void read_register_block(uint8_t* ret, uint8_t addr, uint8_t startReg, uint8_t l
   }
 }
 
+float read_wireless(uint8_t addr, uint8_t reg, uint8_t len)
+{
+  uint8_t dataBlock[len];                        // initialize temporary array to store values, size = len
+  read_i2c_block(dataBlock, addr, 0x00, len);    // read block of data over i2c, store in dataBlock
 
-void setup() {
+  float requestedVal = 0;                        // initialize temporary float to store requested data point
+  memcpy(&requestedVal, &dataBlock[reg], 4);     // copy data from requested register in dataBlock over to requestedVal
+  // debug option to print values within read_wireless
+  // Serial.print("Requested register "); Serial.print(reg);
+  // Serial.print(", fetched value: "); Serial.print(requestedVal);
+  // Serial.println();
+
+  return requestedVal;
+}
+
+
+void setup() 
+{
   Wire.begin();          // Start I2C as a Master device
   Serial.begin(9600);    // Start Serial Monitor at 9600 baud (speed)
   delay(2000);           // Give everything time to power up
   Serial.println("Teensy Master Ready");
 }
 
-void loop() {
-  // Read the full register map in one transaction to avoid register-pointer races
-  uint8_t regbuf[REG_MAP_SIZE];
-  read_register_block(regbuf, SLAVE_ADDR, 0x00, REG_MAP_SIZE);
-
-  // Copy bytes into floats (preserves exact byte order from the slave)
-  memcpy(&leftHeel, &regbuf[REG_LEFT_HEEL], FLOAT_SIZE);
-  memcpy(&leftToe, &regbuf[REG_LEFT_TOE], FLOAT_SIZE);
-  memcpy(&rightHeel, &regbuf[REG_RIGHT_HEEL], FLOAT_SIZE);
-  memcpy(&rightToe, &regbuf[REG_RIGHT_TOE], FLOAT_SIZE);
+void loop() 
+{
+  // use read_wireless to avoid register-pointer races, while still retaining capability to request specific values
+  leftHeel = read_wireless(SLAVE_ADDR, REG_LEFT_HEEL, REG_MAP_SIZE);
+  leftToe = read_wireless(SLAVE_ADDR, REG_LEFT_TOE, REG_MAP_SIZE);
+  rightHeel = read_wireless(SLAVE_ADDR, REG_RIGHT_HEEL, REG_MAP_SIZE);
+  rightToe = read_wireless(SLAVE_ADDR, REG_RIGHT_TOE, REG_MAP_SIZE);
+  
 
   // debug option to print raw data
-  Serial.printf("LH: %f  LT: %f  RH: %f  RT: %f\n",
-              leftHeel, leftToe, rightHeel, rightToe);
+  // Serial.printf("LH: %f  LT: %f  RH: %f  RT: %f\n",
+  //             leftHeel, leftToe, rightHeel, rightToe);
 
   // increase time counter 
   timeCounter++;
