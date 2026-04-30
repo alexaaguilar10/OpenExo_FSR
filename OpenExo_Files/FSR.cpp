@@ -1,13 +1,52 @@
 
 #include "FSR.h"
-#include "I2CHandler.h"
 
 #include "Board.h"
+#include "I2CHandler.h"
 #include "Logger.h"
 //#define FSR_DEBUG 1   //Uncomment if you want to print debug statements
 
 //Arduino compiles everything in the src folder even if not included so it causes and error for the nano if this is not included.
 #if defined(ARDUINO_TEENSY36)  || defined(ARDUINO_TEENSY41) 
+
+namespace
+{
+    float read_wireless_fsr_value(uint8_t addr, uint8_t reg, uint8_t len)
+    {
+        // the wireless FSR sends its reading as raw bytes over I2C.
+        uint8_t raw_bytes[sizeof(float)] = {0};
+        uint8_t bytes_to_read = len;
+
+        if (bytes_to_read > sizeof(raw_bytes))
+        {
+            bytes_to_read = sizeof(raw_bytes);
+        }
+
+        // read the bytes for this sensor starting at its register.
+        I2C::get_instance()->read_i2c(raw_bytes, addr, reg, bytes_to_read);
+
+        float reading = 0;
+        // copy the bytes into a float so the rest of the FSR code can use it normally.
+        memcpy(&reading, raw_bytes, bytes_to_read);
+        return reading;
+    }
+
+    float read_wireless_regressed_fsr_value(uint8_t addr, uint8_t reg, uint8_t len)
+    {
+        // start with the wireless value read over I2C.
+        float Vo = read_wireless_fsr_value(addr, reg, len);
+
+        // same conversion math used by the regressed wired FSR
+        double p[4] = { 0.0787, -0.8471, 20.599, -22.670 };
+        Vo = 10 * 3.3 * Vo / 4095;
+        Vo = (Vo) / (87.43 * pow((Vo), (-0.6721)) - 7.883);
+        Vo = p[0] * Vo * Vo * Vo + p[1] * Vo * Vo + p[2] * Vo + p[3];
+        Vo = (Vo < 0.2f) ? 0.0f : Vo;
+
+        return Vo;
+    }
+}
+
 /*
  * Constructor for the force sensitive resistor
  * Takes in the pin to use and sets it as an analog input
@@ -36,7 +75,6 @@ FSR::FSR(int pin)
     #endif
 }
 
-
 bool FSR::calibrate(bool do_calibrate)
 {
     //Check for rising edge of do_calibrate and start the timer
@@ -48,9 +86,7 @@ bool FSR::calibrate(bool do_calibrate)
         _start_time = millis();
 
         /* Set the Max & Min Values */
-        uint8_t temp_calibration_max;
-        I2C::get_instance()->read_i2c(&temp_calibration_max, _addr, _reg, _len);
-        _calibration_max = temp_calibration_max;
+        _calibration_max = analogRead(_pin);
         _calibration_min = _calibration_max;
     }
     
@@ -64,8 +100,7 @@ bool FSR::calibrate(bool do_calibrate)
         // logger::print("FSR::calibrate : Continuing Cal for pin - ");
         // logger::println(_pin);
 
-        uint8_t current_reading = 0;
-        I2C::get_instance()->read_i2c(&current_reading, _addr, _reg, _len);
+        uint16_t current_reading = analogRead(_pin);
 
         //Track the min and max.
         _calibration_max = max(_calibration_max, current_reading);
@@ -110,8 +145,7 @@ bool FSR::refine_calibration(bool do_refinement)
         //Check if we are done with the calibration
         if (_step_count < _num_steps)
         {
-            uint8_t current_reading = 0;
-            I2C::get_instance()->read_i2c(&current_reading, _addr, _reg, _len);
+            uint16_t current_reading = analogRead(_pin);
 
             //For each step find max and min for every step, keep a running record of the max and min for the step.
             _step_max = max(_step_max, current_reading);
@@ -156,12 +190,7 @@ bool FSR::refine_calibration(bool do_refinement)
 
 float FSR::read()
 {
-    uint8_t temp_reading; 
-    I2C::get_instance()->read_i2c(&temp_reading, _addr, _reg, _len);
-    _raw_reading = temp_reading;
-
-    Serial.print("FSR reading: ");
-    Serial.print(_raw_reading);
+    _raw_reading = analogRead(_pin);
 
     //Return the value using the calibrated refinement if it is done.
     if (_calibration_refinement_max > 0)
@@ -451,16 +480,14 @@ void FSR_Regressed::set_contact_thresholds(float lower_threshold_percent_ground_
 };
 
 /*
- * Constructor for the force sensitive resistor
- * Takes in the pin to use and sets it as an analog input
- * Calibration and readings are initialized to 0 
+ * Wireless duplicates of FSR methods
  */
-wirelessFSR::wirelessFSR(uint8_t addr, uint8_t reg, uint8_t len)
+FSR_Wireless::FSR_Wireless(uint8_t addr, uint8_t reg, uint8_t len)
 {
     _addr = addr;
     _reg = reg;
     _len = len;
-
+    
     _raw_reading = 0;
     _calibrated_reading = 0;
     
@@ -476,164 +503,117 @@ wirelessFSR::wirelessFSR(uint8_t addr, uint8_t reg, uint8_t len)
     _calibration_refinement_max = 0;
     
     #ifdef FSR_DEBUG
-        logger::println("FSR:: Constructor : Exit");
+        logger::println("FSR_Wireless:: Constructor : Exit");
     #endif
 }
 
-bool wirelessFSR::calibrate(bool do_calibrate)
+bool FSR_Wireless::calibrate(bool do_calibrate)
 {
-    //Check for rising edge of do_calibrate and start the timer
     if (do_calibrate > _last_do_calibrate)
     {
-        // logger::print("FSR::calibrate : Starting Cal for pin - ");
-        // logger::println(_pin);
-        
         _start_time = millis();
 
-        /* Set the Max & Min Values */
-        uint8_t temp_calibration_max;
-        I2C::get_instance()->read_i2c(&temp_calibration_max, _addr, _reg, _len);
-        _calibration_max = temp_calibration_max;
+        // First wireless sample becomes both the starting min and max.
+        _calibration_max = read_wireless_fsr_value(_addr, _reg, _len);
         _calibration_min = _calibration_max;
     }
     
-    //Check if we are within the time window and need to do the calibration
     uint16_t delta = millis()-_start_time;
-    // logger::print("FSR::calibrate : delta - ");
-    // logger::println(delta);
     
     if((_cal_time >= (delta)) & do_calibrate)
     {
-        // logger::print("FSR::calibrate : Continuing Cal for pin - ");
-        // logger::println(_pin);
+        // Keep reading the wireless FSR so we can track its full range during calibration.
+        float current_reading = read_wireless_fsr_value(_addr, _reg, _len);
 
-        uint8_t current_reading = 0;
-        I2C::get_instance()->read_i2c(&current_reading, _addr, _reg, _len);
-
-        //Track the min and max.
         _calibration_max = max(_calibration_max, current_reading);
         _calibration_min = min(_calibration_min, current_reading);
     } 
 
-    //The time window ran out so we are done.
     else if (do_calibrate)
     {
-        // logger::print("FSR::calibrate : FSR Cal Done for pin - ");
-        // logger::println(_pin);
-        // logger::print("FSR::calibrate : _calibration_max - ");
-        // logger::print(_calibration_max);
-        // logger::print("\n");
         do_calibrate = false;
     }
         
-    //Store the reading for next time.
     _last_do_calibrate = do_calibrate;
     
     return do_calibrate;
 };
 
-bool wirelessFSR::refine_calibration(bool do_refinement)
+bool FSR_Wireless::refine_calibration(bool do_refinement)
 {
     if (do_refinement)
     {
-        //Check for rising edge of do_calibrate
         if (do_refinement > _last_do_refinement)
         {
             _step_count = 0;
-            
-            //Set the step max min to the middle value so the initial value is likely not used.
             _step_max = (_calibration_max+_calibration_min)/2;
             _step_min = (_calibration_max+_calibration_min)/2;
-
-            //Reset the sum that will be used for averaging
             _step_max_sum = 0;
             _step_min_sum = 0;
         }
         
-        //Check if we are done with the calibration
         if (_step_count < _num_steps)
         {
-            uint8_t current_reading = 0;
-            I2C::get_instance()->read_i2c(&current_reading, _addr, _reg, _len);
+            // use the wireless I2C reading here too, just like the normal FSR uses analogRead.
+            float current_reading = read_wireless_fsr_value(_addr, _reg, _len);
 
-            //For each step find max and min for every step, keep a running record of the max and min for the step.
             _step_max = max(_step_max, current_reading);
             _step_min = min(_step_min, current_reading);
             
-            //Store the current state so we can check for change
             bool last_state = _state;
             _state = utils::schmitt_trigger(current_reading, last_state, _lower_threshold_percent_calibration_refinement * (_calibration_max-_calibration_min) + _calibration_min, _upper_threshold_percent_calibration_refinement * (_calibration_max-_calibration_min) + _calibration_min); 
             
-            //There is a new low -> high transition (next step), add the step max and min to their respective sums.
             if (_state > last_state) 
             {
                 _step_max_sum = _step_max_sum + _step_max;
                 _step_min_sum = _step_min_sum + _step_min;
                 
-                //Reset the step max/min tracker for the next step
                 _step_max = (_calibration_max+_calibration_min)/2;
                 _step_min = (_calibration_max+_calibration_min)/2;
                 
                 _step_count++;
-                
-                // logger::print("FSR::refine_calibration : New Step - ");
             }
 
         }
-        else //We are still at do_refinement but the _step_count is at the _num_steps
+        else
         {
-            //Set the calibration as the average of the max values; average max and min, offset by min and normalize by (max-min), (val-avg_min)/(avg_max-avg_min)
-            _calibration_refinement_max = static_cast<decltype(_calibration_refinement_max)>(_step_max_sum)/_num_steps;     //Casting to the type of _calibration_refinement_max before division 
-            _calibration_refinement_min = static_cast<decltype(_calibration_refinement_min)>(_step_min_sum)/_num_steps;     //Casting to the type of _calibration_refinement_max before division 
- 
-            //Refinement is done
+            _calibration_refinement_max = static_cast<decltype(_calibration_refinement_max)>(_step_max_sum)/_num_steps;
+            _calibration_refinement_min = static_cast<decltype(_calibration_refinement_min)>(_step_min_sum)/_num_steps;
             do_refinement = false;
         } 
     }
 
-    //Store the value so we can check for a rising edge next time.
     _last_do_refinement = do_refinement;
     
     return do_refinement;
 };
 
-float wirelessFSR::read()
+float FSR_Wireless::read()
 {
-    uint8_t temp_reading; 
-    I2C::get_instance()->read_i2c(&temp_reading, _addr, _reg, _len);
-    _raw_reading = temp_reading;
+    // Get the latest wireless FSR value over I2C instead of from an analog pin.
+    _raw_reading = read_wireless_fsr_value(_addr, _reg, _len);
 
-    Serial.print("FSR reading, FSR class: ");
-    Serial.println(_raw_reading);
-
-    //Return the value using the calibrated refinement if it is done.
     if (_calibration_refinement_max > 0)
     {
         _calibrated_reading = ((float)_raw_reading - _calibration_refinement_min)/(_calibration_refinement_max-_calibration_refinement_min);
     }
-
-    //If we haven't refined yet just use the regular calibration.
     else if (_calibration_max > 0)
     {
         _calibrated_reading = ((float)_raw_reading - _calibration_min)/(_calibration_max-_calibration_min);
     }
-
-    //If no calibrations are done just return the raw reading.
     else
     {
         _calibrated_reading = _raw_reading;
     }
     
-    //Based on the readings update the ground contact state.
     _calc_ground_contact();
     
     return  _calibrated_reading;
 
 };
 
-bool wirelessFSR::_calc_ground_contact()
+bool FSR_Wireless::_calc_ground_contact()
 {
-    //Only do this if the refinement is done.
     bool current_state_estimate = false;
 
     if (_calibration_refinement_max > 0)
@@ -646,22 +626,184 @@ bool wirelessFSR::_calc_ground_contact()
     return _ground_contact;
 };
 
-bool wirelessFSR::get_ground_contact()
+bool FSR_Wireless::get_ground_contact()
 {
-    // logger::print("FSR::refine_calibration : FSR pin - ");
-    // logger::print(_pin);
-    // logger::print("\t _ground_contact -");
-    // logger::println(_ground_contact);
     return _ground_contact;
 };
 
-void wirelessFSR::get_contact_thresholds(float &lower_threshold_percent_ground_contact, float &upper_threshold_percent_ground_contact)
+void FSR_Wireless::get_contact_thresholds(float &lower_threshold_percent_ground_contact, float &upper_threshold_percent_ground_contact)
 {
     lower_threshold_percent_ground_contact = _lower_threshold_percent_ground_contact;
     upper_threshold_percent_ground_contact = _upper_threshold_percent_ground_contact;
 };
 
-void wirelessFSR::set_contact_thresholds(float lower_threshold_percent_ground_contact, float upper_threshold_percent_ground_contact)
+void FSR_Wireless::set_contact_thresholds(float lower_threshold_percent_ground_contact, float upper_threshold_percent_ground_contact)
+{
+    _lower_threshold_percent_ground_contact = lower_threshold_percent_ground_contact;
+    _upper_threshold_percent_ground_contact = upper_threshold_percent_ground_contact;
+};
+
+/*
+ * Wireless version of the regressed FSR methods.
+ * These methods read the sensor over I2C and then apply the same regression math.
+ */
+FSR_Wireless_Regressed::FSR_Wireless_Regressed(uint8_t addr, uint8_t reg, uint8_t len)
+{
+    _addr = addr;
+    _reg = reg;
+    _len = len;
+    
+    _raw_reading = 0;
+    _calibrated_reading = 0;
+    
+    _last_do_calibrate = false; 
+    _start_time = 0;
+    _calibration_min = 0;
+    _calibration_max = 0;
+    
+    _state = false;
+    _last_do_refinement = false;
+    _step_count = 0;
+    _calibration_refinement_min = 0;
+    _calibration_refinement_max = 0;
+    
+    #ifdef FSR_DEBUG
+        logger::println("FSR_Wireless_Regressed:: Constructor : Exit");
+    #endif
+}
+
+bool FSR_Wireless_Regressed::calibrate(bool do_calibrate)
+{
+    if (do_calibrate > _last_do_calibrate)
+    {
+        _start_time = millis();
+
+        // Use the wireless I2C value and then run the normal regression math on it.
+        _calibration_max = read_wireless_regressed_fsr_value(_addr, _reg, _len);
+        _calibration_min = _calibration_max;
+    }
+
+    uint16_t delta = millis() - _start_time;
+
+    if ((_cal_time >= (delta)) & do_calibrate)
+    {
+        float current_reading = read_wireless_regressed_fsr_value(_addr, _reg, _len);
+
+        _calibration_max = max(_calibration_max, current_reading);
+        _calibration_min = min(_calibration_min, current_reading);
+    }
+
+    else if (do_calibrate)
+    {
+        do_calibrate = false;
+    }
+
+    _last_do_calibrate = do_calibrate;
+
+    return do_calibrate;
+};
+
+bool FSR_Wireless_Regressed::refine_calibration(bool do_refinement)
+{
+    if (do_refinement)
+    {
+        if (do_refinement > _last_do_refinement)
+        {
+            _step_count = 0;
+            _step_max = (_calibration_max + _calibration_min) / 2;
+            _step_min = (_calibration_max + _calibration_min) / 2;
+            _step_max_sum = 0;
+            _step_min_sum = 0;
+        }
+
+        if (_step_count < _num_steps)
+        {
+            // Read the wireless value over I2C and regress it before using it here.
+            float current_reading = read_wireless_regressed_fsr_value(_addr, _reg, _len);
+
+            _step_max = max(_step_max, current_reading);
+            _step_min = min(_step_min, current_reading);
+
+            bool last_state = _state;
+            _state = utils::schmitt_trigger(current_reading, last_state, _lower_threshold_percent_calibration_refinement * (_calibration_max - _calibration_min) + _calibration_min, _upper_threshold_percent_calibration_refinement * (_calibration_max - _calibration_min) + _calibration_min);
+
+            if (_state > last_state)
+            {
+                _step_max_sum = _step_max_sum + _step_max;
+                _step_min_sum = _step_min_sum + _step_min;
+
+                _step_max = (_calibration_max + _calibration_min) / 2;
+                _step_min = (_calibration_max + _calibration_min) / 2;
+
+                _step_count++;
+            }
+
+        }
+        else
+        {
+            _calibration_refinement_max = static_cast<decltype(_calibration_refinement_max)>(_step_max_sum) / _num_steps;
+            _calibration_refinement_min = static_cast<decltype(_calibration_refinement_min)>(_step_min_sum) / _num_steps;
+
+            do_refinement = false;
+        }
+    }
+
+    _last_do_refinement = do_refinement;
+
+    return do_refinement;
+};
+
+
+float FSR_Wireless_Regressed::read()
+{
+    // Get the wireless value through I2C, then apply the same regression as before.
+    _raw_reading = read_wireless_regressed_fsr_value(_addr, _reg, _len);
+
+    if (_calibration_refinement_max > 0)
+    {
+        _calibrated_reading = ((float)_raw_reading - _calibration_refinement_min) / (_calibration_refinement_max - _calibration_refinement_min);
+    }
+    else if (_calibration_max > 0)
+    {
+        _calibrated_reading = ((float)_raw_reading - _calibration_min) / (_calibration_max - _calibration_min);
+    }
+    else
+    {
+        _calibrated_reading = _raw_reading;
+    }
+
+    _calc_ground_contact();
+
+    return  _calibrated_reading;
+};
+
+bool FSR_Wireless_Regressed::_calc_ground_contact()
+{
+    bool current_state_estimate = false;
+
+    if (_calibration_refinement_max > 0)
+    {
+        current_state_estimate = utils::schmitt_trigger(_calibrated_reading, _ground_contact, _lower_threshold_percent_ground_contact, _upper_threshold_percent_ground_contact);
+    }
+
+    _ground_contact = current_state_estimate;
+
+    return _ground_contact;
+};
+
+
+bool FSR_Wireless_Regressed::get_ground_contact()
+{
+    return _ground_contact;
+};
+
+void FSR_Wireless_Regressed::get_contact_thresholds(float &lower_threshold_percent_ground_contact, float &upper_threshold_percent_ground_contact)
+{
+    lower_threshold_percent_ground_contact = _lower_threshold_percent_ground_contact;
+    upper_threshold_percent_ground_contact = _upper_threshold_percent_ground_contact;
+};
+
+void FSR_Wireless_Regressed::set_contact_thresholds(float lower_threshold_percent_ground_contact, float upper_threshold_percent_ground_contact)
 {
     _lower_threshold_percent_ground_contact = lower_threshold_percent_ground_contact;
     _upper_threshold_percent_ground_contact = upper_threshold_percent_ground_contact;
